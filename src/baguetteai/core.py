@@ -58,9 +58,9 @@ def constructL(L, H, O, I, W):
 def compute(nn):
     prev = nn[0]
     for layer in nn[1:]:
-        for neuron in layer:
-            neuron.inputs=prev
-            neuron.forward()
+        for n in layer:
+            n.inputs=prev
+            n.forward()
         prev = [n.output for n in layer]
     return prev
 
@@ -73,7 +73,7 @@ def backprop(nn, targets, LearningRate):
     for i in range(len(layers)-2, -1, -1):
         for j,n in enumerate(layers[i]):
             # Need to focus on this if dealing with different number of neurons in the hidden layers
-            n.backward(sum(m.weights[j]*m.delta for m in layers[i+1])) # This only works when the NN has the same number of neurons in the hidden layers
+            n.backward(sum(m.weights[j]*m.delta for m in layers[i+1]))
 
     for l in layers:
         for n in l:
