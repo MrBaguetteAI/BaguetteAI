@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: BaguetteAI
+Version: 0.1.0
+Summary: An AI development library written in python.
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.20
+Dynamic: license-file
+
+# BaguetteAI
+An AI development library written in python.

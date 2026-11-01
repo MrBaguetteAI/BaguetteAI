@@ -1,0 +1,11 @@
+LICENSE
+README.md
+pyproject.toml
+src/BaguetteAI.egg-info/PKG-INFO
+src/BaguetteAI.egg-info/SOURCES.txt
+src/BaguetteAI.egg-info/dependency_links.txt
+src/BaguetteAI.egg-info/requires.txt
+src/BaguetteAI.egg-info/top_level.txt
+src/baguetteai/__init__.py
+src/baguetteai/core.py
+tests/test_core.py
