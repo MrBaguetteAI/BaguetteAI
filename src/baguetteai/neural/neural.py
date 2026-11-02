@@ -1,4 +1,3 @@
-import json
 import math
 import random
 
@@ -46,6 +45,19 @@ def constructW(Input, TotalL, NumberHiddenN, NumberO, randomize=False):
             WM.append([row[:] for _ in range(n_out)])
     return WM
         
+def extract(nn):
+    Weights = []
+    Bias = []
+    for layer in nn[1:]:
+        tempW = []
+        tempB = []
+        for n in layer:
+            tempW.append(n.weights)
+            tempB.append(n.bias)
+        Weights.append(tempW)
+        Bias.append(tempB)
+    return dict(weights = Weights, bias = Bias)
+
 def constructL(L, H, O, I, W):
     nn = [[] for _ in range(L)]
     nn[0] = I
@@ -79,7 +91,7 @@ def backprop(nn, targets, LearningRate):
         for n in l:
             n.update(LearningRate)
 
-def training(nn, dataSet, epochs, LR=0.5, report_every = 1000):
+def training(nn, dataSet, epochs, LR, report_every,show=True):
     for epoch in range(1,epochs+1):
         total = 0
         for x, target in dataSet:
@@ -87,21 +99,6 @@ def training(nn, dataSet, epochs, LR=0.5, report_every = 1000):
             out = compute(nn)
             total += 0.5 * sum((o - t) ** 2 for o, t in zip(out, target))
             backprop(nn, target, LR)
-        if epoch % report_every == 0:
-            print(f"epoch {epoch}: loss {total / len(dataSet):.5f}")
-
-
-
-def save_network(nn, path):
-    layers = nn[1:]   # nn[0] is just the input, nothing to save
-    data = [[{"w": n.weights, "b": n.bias} for n in layer] for layer in layers]
-    with open(path, "w") as f:
-        json.dump(data, f)
-
-def load_network(path, inputs):
-    with open(path) as f:
-        data = json.load(f)
-    nn = [inputs]
-    for layer in data:
-        nn.append([neuron(None, d["w"], d["b"]) for d in layer])
-    return nn
+        if show:
+            if epoch % report_every == 0:
+                print(f"epoch {epoch}: loss {total / len(dataSet):.5f}")
