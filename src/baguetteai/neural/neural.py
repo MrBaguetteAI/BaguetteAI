@@ -1,4 +1,3 @@
-import json
 import math
 import random
 
@@ -90,18 +89,3 @@ def training(nn, dataSet, epochs, LR=0.5, report_every = 1000):
         if epoch % report_every == 0:
             print(f"epoch {epoch}: loss {total / len(dataSet):.5f}")
 
-
-
-def save_network(nn, path):
-    layers = nn[1:]   # nn[0] is just the input, nothing to save
-    data = [[{"w": n.weights, "b": n.bias} for n in layer] for layer in layers]
-    with open(path, "w") as f:
-        json.dump(data, f)
-
-def load_network(path, inputs):
-    with open(path) as f:
-        data = json.load(f)
-    nn = [inputs]
-    for layer in data:
-        nn.append([neuron(None, d["w"], d["b"]) for d in layer])
-    return nn
