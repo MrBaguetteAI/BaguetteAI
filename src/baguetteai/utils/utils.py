@@ -1,13 +1,3 @@
-'''
-load_json -> to read data from a json file
-save_json -> to write the inputed data in the json file
-RGB_Seggrigation -> to distribute the R, G, and B values in respective lists
-RGB_Conjugation -> to combine all the R, G, and B lists into one lists
-read_img -> used to read an image and get the list of the values
-show_img -> to plot the image list using matplotlib
-filter_apply -> used to apply the filter on a 2D list of the image
-pooling -> used for the pooling step of the CNN
-'''
 import json
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,7 +12,18 @@ def load_json(path, inputs):
         data = json.load(f)
     return data
 
-def RGB_Conjugation(R,G,B):
+def RGB_seggrigation(d):
+    R = d[:, :, 0]
+    G = d[:, :, 1]
+    B = d[:, :, 2]
+
+    write_D(R,"R_data.json")
+    write_D(G,"G_data.json")
+    write_D(B,"B_data.json")
+
+    return R,G,B
+
+def RGB_conjugation(R,G,B):
     #Combines all the arrays into one array ex: (200, 300, 3)
     return np.stack((R,G,B),axis=-1) 
 
