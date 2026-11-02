@@ -1,6 +1,7 @@
-from .network import (
+from .neural import (
     neuron,
     constructW,
+    extract,
     constructL,
     compute,
     backprop,
@@ -8,6 +9,6 @@ from .network import (
 )
 
 __all__ = [
-    "neuron", "constructW", "constructL", "compute",
+        "neuron", "constructW", "extract", "constructL", "compute",
     "backprop", "training",
     ]
