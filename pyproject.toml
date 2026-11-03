@@ -15,4 +15,4 @@ dependencies = ["numpy>=1.20","matplotlib>=3.11.2"]
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = {attr = "baguetteai.__version__"}
+version = {attr = "BaguetteAI.__version__"}
