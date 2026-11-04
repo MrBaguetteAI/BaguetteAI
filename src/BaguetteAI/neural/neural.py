@@ -58,6 +58,21 @@ def extract(nn):
         Bias.append(tempB)
     return dict(weights = Weights, bias = Bias)
 
+def insert(nn, data):
+    """
+    Load weights and biases from `extract()` output back into the network `nn`.
+    `nn[0]` is the input layer (no weights), so we skip it just like extract does.
+    """
+    Weights = data["weights"]
+    Bias    = data["bias"]
+
+    for layer_idx, layer in enumerate(nn[1:]):
+        for neuron_idx, neuron in enumerate(layer):
+            neuron.weights = Weights[layer_idx][neuron_idx]
+            neuron.bias    = Bias[layer_idx][neuron_idx]
+
+    return nn
+
 def constructL(L, I, H, O, W):
     nn = [[] for _ in range(L)]
     nn[0] = I
