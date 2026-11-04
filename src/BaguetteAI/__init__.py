@@ -1,4 +1,4 @@
-from . import neural, utils, image
+from . import neural, util, image
 
-__all__ = ["neural","utils","image"]
+__all__ = ["neural","util","image"]
 __version__ = "0.1.2"

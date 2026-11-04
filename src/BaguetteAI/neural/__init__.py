@@ -2,6 +2,7 @@ from .neural import (
     neuron,
     constructW,
     extract,
+    insert,
     constructL,
     compute,
     backprop,
@@ -10,6 +11,6 @@ from .neural import (
 )
 
 __all__ = [
-        "neuron", "constructW", "extract", "constructL", "compute",
+        "neuron", "constructW", "extract", "insert", "constructL", "compute",
     "backprop", "training_epochs", "training",
     ]
