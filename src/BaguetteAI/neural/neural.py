@@ -34,8 +34,8 @@ class neuron:
 
 
 
-def constructW(Input, TotalL, NumberHiddenN, NumberO, randomize=False):
-    sizes = [len(Input)] + [NumberHiddenN] * (TotalL - 2) + [NumberO]
+def constructW(TotalL, Input, NumberHiddenN, NumberO, randomize=False):
+    sizes = [Input] + [NumberHiddenN] * (TotalL - 2) + [NumberO]
     WM = []
     for n_in, n_out in zip(sizes[:-1], sizes[1:]):
         if randomize:
@@ -58,7 +58,7 @@ def extract(nn):
         Bias.append(tempB)
     return dict(weights = Weights, bias = Bias)
 
-def constructL(L, H, O, I, W):
+def constructL(L, I, H, O, W):
     nn = [[] for _ in range(L)]
     nn[0] = I
     for i in range(1, L):
@@ -91,7 +91,7 @@ def backprop(nn, targets, LearningRate):
         for n in l:
             n.update(LearningRate)
 
-def training(nn, dataSet, epochs, LR, report_every,show=True):
+def training_epochs(nn, dataSet, epochs, LR, report_every,show=True):
     for epoch in range(1,epochs+1):
         total = 0
         for x, target in dataSet:
@@ -102,3 +102,11 @@ def training(nn, dataSet, epochs, LR, report_every,show=True):
         if show:
             if epoch % report_every == 0:
                 print(f"epoch {epoch}: loss {total / len(dataSet):.5f}")
+
+def training(nn, dataSet, LR, show=True):
+        total = 0
+        for x, target in dataSet:
+            nn[0] = x
+            out = compute(nn)
+            total += 0.5 * sum((o - t) ** 2 for o, t in zip(out, target))
+            backprop(nn, target, LR)
