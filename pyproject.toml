@@ -9,10 +9,10 @@ description = "An AI development library written in python."
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.8"
-dependencies = ["numpy>=1.20","matplotlib>=3.11.2"]
+dependencies = ["numpy>=1.20"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = {attr = "baguetteai.__version__"}
+version = {attr = "BaguetteAI.__version__"}
