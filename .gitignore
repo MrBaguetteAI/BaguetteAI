@@ -1,4 +1,8 @@
-dist/
+# .gitignore
+*.so
+*.pyd
+*.dll
 build/
+dist/
 *.egg-info/
 __pycache__/
