@@ -5,7 +5,28 @@ on:
     types: [published]
 
 jobs:
-  build:
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.16.5
+        env:
+          CIBW_SKIP: "*-win32 *-manylinux_i686 pp* cp38-macosx_arm64 cp39-macosx_arm64"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  build_sdist:
+    name: Build source distribution
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,21 +34,22 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install build
-      - run: python -m build
+      - run: python -m build --sdist
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist/
+          name: sdist
+          path: dist/*.tar.gz
 
   publish:
-    needs: build
+    needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write      # required for trusted publishing
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: dist
-          path: dist/
+          pattern: '*'
+          path: dist
+          merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
