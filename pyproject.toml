@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "pybind11>=2.10"]
+requires = ["setuptools>=64", "pybind11>=2.13"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -20,3 +20,7 @@ version = {attr = "BaguetteAI.__version__"}
 [[tool.setuptools.ext-modules]]
 name = "BaguetteAI.util._core"
 sources = ["src/BaguetteAI/util/_core.cpp"]
+
+[[tool.setuptools.ext-modules]]
+name = "BaguetteAI.neural.neural_functions"
+sources = ["src/BaguetteAI/neural/neural_functions.cpp"]

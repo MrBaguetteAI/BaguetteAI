@@ -8,6 +8,13 @@ ext_modules = [
         include_dirs=[pybind11.get_include()],
         language="c++",
     ),
+
+    Extension(
+        "BaguetteAI.neural.neural_functions",
+        ["src/BaguetteAI/neural/neural_functions.cpp"],
+        include_dirs=[pybind11.get_include()],
+        language="c++",
+    ),
 ]
 
 setup(
