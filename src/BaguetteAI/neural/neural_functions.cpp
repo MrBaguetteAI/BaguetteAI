@@ -173,7 +173,7 @@ matrix2D Backward_Hidden(const matrix2D& a,            // activation of THIS lay
 
 
 Network Construct_Neural_Net(const std::vector<int>& sizes) {
-  std::random_device rd;
+  // std::random_device rd;
   std::mt19937 gen(42);
   std::uniform_int_distribution<> distr(-0.5,0.5);
   
@@ -187,10 +187,13 @@ Network Construct_Neural_Net(const std::vector<int>& sizes) {
   net.b.resize(L);
 
   for (size_t l = 0; l < L; ++l) {
-      int n_in  = sizes[l];
-      int n_out = sizes[l + 1];
-      net.W[l] = matrix2D(n_out, matrix1D(n_in, distr(gen)));
-      net.b[l] = matrix2D(n_out, matrix1D(1,   distr(gen)));
+    int n_in  = sizes[l];
+    int n_out = sizes[l + 1];
+    net.W[l] = matrix2D(n_out, matrix1D(n_in, distr(gen)));
+    for (auto& row : net.W[l])
+        for (auto& v : row)
+            v = distr(gen); 
+    net.b[l] = matrix2D(n_out, matrix1D(1,   distr(gen)));
   }
   return net;
 }
