@@ -1,9 +1,25 @@
 from .neural_functions import (
-    Matrix_Multiply, 
+    # matrix primitives
+    Matrix_Multiply,
+    Matrix_ADD,
     Matrix_Subtract,
-    Matrix_ADD, 
+    Matrix_Transpose,
+    Matrix_Scale,
+    Hadamard,
+    # activation
     sigmoid,
-    main_run
+    Sigmoid_Derivative,
+    # backprop building blocks
+    Backward_Output,
+    Backward_Hidden,
+    # network
+    Network,
+    Cache,
+    Construct_Neural_Net,
+    Forward,
+    TrainStep,
+    # demo
+    main_run,
 )
 #         from .neural import (
 #     neuron,
@@ -24,8 +40,19 @@ from .neural_functions import (
 
 __all__ = [
     "Matrix_Multiply",
-    "Matrix_Subtract",
     "Matrix_ADD",
+    "Matrix_Subtract",
+    "Matrix_Transpose",
+    "Matrix_Scale",
+    "Hadamard",
     "sigmoid",
-    "main_run"
+    "Sigmoid_Derivative",
+    "Backward_Output",
+    "Backward_Hidden",
+    "Network",
+    "Cache",
+    "Construct_Neural_Net",
+    "Forward",
+    "TrainStep",
+    "main_run",
 ]

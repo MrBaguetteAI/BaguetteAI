@@ -1,9 +1,12 @@
+#include <random>
 #include <iostream>
 #include <vector>
 #include <cmath>
 #include <stdexcept>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h> // For automatic conversion of Python lists to std::vector
+
+namespace py = pybind11;
 
 using matrix1D = std::vector<double>;
 using matrix2D = std::vector<std::vector<double>>;
@@ -16,8 +19,8 @@ struct Network {
 
 // forward: returns (activations per layer, z's per layer)
 struct Cache {
-    std::vector<matrix2D> a;   // a[0]=input, a[L]=output
-    std::vector<matrix2D> z;   // z[1..L]
+    matrix3D a;   // a[0]=input, a[L]=output
+    matrix3D z;   // z[1..L]
 };
 
 
@@ -130,10 +133,14 @@ matrix2D sigmoid(const matrix2D& A){
 
 
 matrix2D Hadamard(const matrix2D& A, const matrix2D& B){
+  if (A.empty() || B.empty())
+    throw std::invalid_argument("Hadamard: empty matrix");
   /*This function computes the Hadamard product — the element-wise multiplication of two matrices of identical shape.*/
   if (A.size() != B.size() || A[0].size() != B[0].size())
     throw std::invalid_argument("Hadamard: dimension mismatch");
+
   matrix2D R = A;
+
   for (size_t i = 0; i < A.size(); ++i)
     for (size_t j = 0; j < A[i].size(); ++j)
       R[i][j] = A[i][j] * B[i][j];
@@ -167,19 +174,19 @@ matrix2D Backward_Hidden(const matrix2D& a,            // activation of THIS lay
 
 Network Construct_Neural_Net(const std::vector<int>& sizes) {
   std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<> distr(1,100);
+  std::mt19937 gen(42);
+  std::uniform_int_distribution<> distr(-0.5,0.5);
   
   // sizes = {InputN, HiddenN, ..., OutputN}; length = TotalL + 1 if TotalL counts weighted layers
   if (sizes.size() < 2)
       throw std::invalid_argument("Construct_Neural_Net: need at least 2 layer sizes");
 
   Network net;
-  int L = sizes.size() - 1;          // number of weighted layers
+  size_t L = sizes.size() - 1;          // number of weighted layers
   net.W.resize(L);
   net.b.resize(L);
 
-  for (double l = 0; l < L; ++l) {
+  for (size_t l = 0; l < L; ++l) {
       int n_in  = sizes[l];
       int n_out = sizes[l + 1];
       net.W[l] = matrix2D(n_out, matrix1D(n_in, distr(gen)));
@@ -190,13 +197,13 @@ Network Construct_Neural_Net(const std::vector<int>& sizes) {
 
 
 Cache Forward(const Network& net, const matrix2D& x) {
-  int L = net.W.size();
+  size_t L = net.W.size();
   Cache c;
   c.a.resize(L+1);
   c.z.resize(L+1);
   c.a[0] = x;
 
-  for (int l = 0; l < L; ++l) {
+  for (size_t l = 0; l < L; ++l) {
     c.z[l+1] = Matrix_ADD(Matrix_Multiply(net.W[l], c.a[l]), net.b[l]);
     c.a[l+1] = sigmoid(c.z[l+1]);
   }
@@ -222,7 +229,7 @@ double TrainStep(Network& net, const matrix2D& x,
       d[l] = Backward_Hidden(c.a[l], net.W[l], d[l+1]);
 
   // gradients + update
-  for (int l = 0; l < L; ++l) {
+  for (size_t l = 0; l < L; ++l) {
       matrix2D dW = Matrix_Multiply(d[l+1], Matrix_Transpose(c.a[l]));
       net.W[l] = Matrix_Subtract(net.W[l], Matrix_Scale(dW, lr));   // add Matrix_Scale helper
       net.b[l] = Matrix_Subtract(net.b[l], Matrix_Scale(d[l+1], lr));
@@ -278,20 +285,32 @@ int main_run(){
 
 PYBIND11_MODULE(neural_functions, m) {
     m.doc() = "BaguetteAI neural network C++ core";
-    m.def("Matrix_Multiply",      &Matrix_Multiply,       "Multiply two 2-D matrices");
-    m.def("Matrix_ADD",           &Matrix_ADD,            "Add two 2-D matrices");
-    m.def("Matrix_Subtract",      &Matrix_Subtract,       "Subtract two 2-D matrices");
-    m.def("Matrix_Transpose",     &Matrix_Transpose,      "Transpose the Matrix");
-    m.def("Matrix_Scale",         &Matrix_Scale,          "Matrix multiplication with a constant");
-    m.def("sigmoid",              &sigmoid,               "Apply sigmoid element-wise to a 2-D matrix");
-    m.def("Hadamard",             &Hadamard,              "Multiplication of 2 matrices by the elements");
-    m.def("Sigmoid_Derivative",   &Sigmoid_Derivative,    "The derivative of the sigmoid function");
-    m.def("Backward_Output",      &Backward_Output,       "The back-propagation of the output layer");
-    m.def("Backward_Hidden",      &Backward_Hidden,       "The back-propagation of the hidden layers");
-    m.def("Construct_Neural_Net", &Construct_Neural_Net,  "The construction of a neural network");
-    m.def("Forward",              &Forward,               "The forward forward-propagation of the neural net");
-    m.def("TrainStep",            &TrainStep,             "The training of the neural nework");
 
-    m.def("main_run",             &main_run,              "Run the demo network");
+    // ---- bind structs first (required for the functions below) ----
+    py::class_<Network>(m, "Network")
+        .def_readwrite("W", &Network::W)
+        .def_readwrite("b", &Network::b);
 
+    py::class_<Cache>(m, "Cache")
+        .def_readwrite("a", &Cache::a)
+        .def_readwrite("z", &Cache::z);
+
+    // ---- matrix primitives ----
+    m.def("Matrix_Multiply",    &Matrix_Multiply,    "Multiply two 2-D matrices");
+    m.def("Matrix_ADD",         &Matrix_ADD,         "Add two 2-D matrices");
+    m.def("Matrix_Subtract",    &Matrix_Subtract,    "Subtract two 2-D matrices");
+    m.def("Matrix_Transpose",   &Matrix_Transpose,   "Transpose the Matrix");
+    m.def("Matrix_Scale",       &Matrix_Scale,       "Multiply each entry by a scalar");
+    m.def("sigmoid",            &sigmoid,            "Element-wise sigmoid");
+    m.def("Hadamard",           &Hadamard,           "Element-wise multiply");
+    m.def("Sigmoid_Derivative", &Sigmoid_Derivative, "Sigmoid derivative (from activation)");
+
+    // ---- network functions ----
+    m.def("Backward_Output",      &Backward_Output,      "Output-layer delta");
+    m.def("Backward_Hidden",      &Backward_Hidden,      "Hidden-layer delta");
+    m.def("Construct_Neural_Net", &Construct_Neural_Net, "Build a network from layer sizes");
+    m.def("Forward",              &Forward,              "Return Cache (activations + z)");
+    m.def("TrainStep",            &TrainStep,            "One SGD step, mutates net");
+
+    m.def("main_run",             &main_run,             "Demo network");
 }
