@@ -175,7 +175,7 @@ matrix2D Backward_Hidden(const matrix2D& a,            // activation of THIS lay
 Network Construct_Neural_Net(const std::vector<int>& sizes) {
   // std::random_device rd;
   std::mt19937 gen(42);
-  std::uniform_int_distribution<> distr(-0.5,0.5);
+  std::uniform_int_distribution<> distr(-0.8,0.8);
   
   // sizes = {InputN, HiddenN, ..., OutputN}; length = TotalL + 1 if TotalL counts weighted layers
   if (sizes.size() < 2)
@@ -238,6 +238,47 @@ double TrainStep(Network& net, const matrix2D& x,
       net.b[l] = Matrix_Subtract(net.b[l], Matrix_Scale(d[l+1], lr));
   }
   return loss;
+}
+
+double TrainLoop(Network& net,
+                 const matrix3D& X,          // list of inputs, each a matrix2D column vector
+                 const matrix3D& Y,          // list of targets, each a matrix2D column vector
+                 int epochs,
+                 double lr,
+                 int report_every = 1000)
+                 // int seed = 0,
+                 // bool shuffle = true)
+{
+    if (X.size() != Y.size())
+        throw std::invalid_argument("TrainLoop: X and Y must have the same length");
+    if (X.empty())
+        throw std::invalid_argument("TrainLoop: dataset is empty");
+
+    const size_t n = X.size();
+
+    // // index vector we shuffle each epoch
+    // std::vector<int> idx(n);
+    // std::iota(idx.begin(), idx.end(), 0);
+    //
+    // std::mt19937 gen(seed);
+    double last_epoch_loss = 0.0;
+
+    for (int epoch = 0; epoch < epochs; ++epoch) {
+        // if (shuffle)
+        //     std::shuffle(idx.begin(), idx.end(), gen);
+
+        double total_loss = 0.0;
+        for (int i = 0; i < static_cast<int>(n); ++i) {
+            total_loss += TrainStep(net, X[i], Y[i], lr);
+        }
+        last_epoch_loss = total_loss / static_cast<double>(n);
+
+        if (report_every > 0 && (epoch % report_every == 0)) {
+            std::cout << "epoch " << epoch
+                      << "  loss " << last_epoch_loss << "\n";
+        }
+    }
+    return last_epoch_loss;
 }
 
 
@@ -314,6 +355,16 @@ PYBIND11_MODULE(neural_functions, m) {
     m.def("Construct_Neural_Net", &Construct_Neural_Net, "Build a network from layer sizes");
     m.def("Forward",              &Forward,              "Return Cache (activations + z)");
     m.def("TrainStep",            &TrainStep,            "One SGD step, mutates net");
+    m.def("TrainLoop", &TrainLoop,
+          "Run a full training loop over (X, Y). Mutates net in place.",
+          py::arg("net"),
+          py::arg("X"),
+          py::arg("Y"),
+          py::arg("epochs"),
+          py::arg("lr"),
+          py::arg("report_every") = 1000);
+          // py::arg("seed")         = 0,
+          // py::arg("shuffle")      = true);
 
     m.def("main_run",             &main_run,             "Demo network");
 }

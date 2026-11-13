@@ -18,6 +18,7 @@ from .neural_functions import (
     Construct_Neural_Net,
     Forward,
     TrainStep,
+    TrainLoop,
     # demo
     main_run,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "Construct_Neural_Net",
     "Forward",
     "TrainStep",
+    "TrainLoop",
     "main_run",
 ]
 

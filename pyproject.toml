@@ -18,9 +18,5 @@ where = ["src"]
 version = {attr = "BaguetteAI.__version__"}
 
 [[tool.setuptools.ext-modules]]
-name = "BaguetteAI.util._core"
-sources = ["src/BaguetteAI/util/_core.cpp"]
-
-[[tool.setuptools.ext-modules]]
 name = "BaguetteAI.neural.neural_functions"
 sources = ["src/BaguetteAI/neural/neural_functions.cpp"]
