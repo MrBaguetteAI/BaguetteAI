@@ -1,370 +1,417 @@
-#include <random>
-#include <iostream>
-#include <vector>
-#include <cmath>
-#include <stdexcept>
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h> // For automatic conversion of Python lists to std::vector
+#include <pybind11/stl.h>
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <numeric>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace py = pybind11;
 
-using matrix1D = std::vector<double>;
-using matrix2D = std::vector<std::vector<double>>;
-using matrix3D = std::vector<std::vector<std::vector<double>>>;
+using vec = std::vector<double>;
+using mat = std::vector<std::vector<double>>;
+
+// ---------------------------------------------------------------------------
+// Small linear-algebra helpers
+// ---------------------------------------------------------------------------
+static vec matvec(const mat& W, const vec& v) {
+    if (W.empty() || v.empty()) throw std::invalid_argument("matvec: empty");
+    const size_t r = W.size(), c = W[0].size();
+    if (c != v.size()) throw std::invalid_argument("matvec: dimension mismatch");
+    vec out(r, 0.0);
+    for (size_t i = 0; i < r; ++i)
+        for (size_t j = 0; j < c; ++j)
+            out[i] += W[i][j] * v[j];
+    return out;
+}
+
+static vec vadd(const vec& a, const vec& b) {
+    if (a.size() != b.size()) throw std::invalid_argument("vadd: mismatch");
+    vec r(a.size());
+    for (size_t i = 0; i < a.size(); ++i) r[i] = a[i] + b[i];
+    return r;
+}
+
+static vec vsub(const vec& a, const vec& b) {
+    if (a.size() != b.size()) throw std::invalid_argument("vsub: mismatch");
+    vec r(a.size());
+    for (size_t i = 0; i < a.size(); ++i) r[i] = a[i] - b[i];
+    return r;
+}
+
+static vec vmul(const vec& a, const vec& b) {
+    if (a.size() != b.size()) throw std::invalid_argument("vmul: mismatch");
+    vec r(a.size());
+    for (size_t i = 0; i < a.size(); ++i) r[i] = a[i] * b[i];
+    return r;
+}
+
+// W^T @ d   — with W being (n_out, n_in), returns length n_in
+static vec matT_vec(const mat& W, const vec& d) {
+    if (W.empty() || d.empty()) throw std::invalid_argument("matT_vec: empty");
+    const size_t n_out = W.size(), n_in = W[0].size();
+    if (n_out != d.size()) throw std::invalid_argument("matT_vec: mismatch");
+    vec r(n_in, 0.0);
+    for (size_t i = 0; i < n_out; ++i)
+        for (size_t j = 0; j < n_in; ++j)
+            r[j] += W[i][j] * d[i];
+    return r;
+}
+
+// ---------------------------------------------------------------------------
+// Activations — one entry per supported name
+// ---------------------------------------------------------------------------
+static vec act_forward(const std::string& name, const vec& z) {
+    vec r(z.size());
+    if (name == "sigmoid") {
+        for (size_t i = 0; i < z.size(); ++i) {
+            const double x = z[i];
+            r[i] = (x >= 0) ? 1.0 / (1.0 + std::exp(-x))
+                            : std::exp(x) / (1.0 + std::exp(x));
+        }
+    } else if (name == "relu") {
+        for (size_t i = 0; i < z.size(); ++i) r[i] = z[i] > 0 ? z[i] : 0.0;
+    } else if (name == "tanh") {
+        for (size_t i = 0; i < z.size(); ++i) r[i] = std::tanh(z[i]);
+    } else if (name == "linear") {
+        r = z;
+    } else if (name == "softmax") {
+        double m = *std::max_element(z.begin(), z.end());
+        double s = 0.0;
+        for (size_t i = 0; i < z.size(); ++i) { r[i] = std::exp(z[i] - m); s += r[i]; }
+        for (auto& v : r) v /= s;
+    } else {
+        throw std::invalid_argument("Unknown activation: " + name);
+    }
+    return r;
+}
+
+// Derivative given BOTH z and a (the activation of z). Most activations need only one,
+// but softmax's derivative is handled in the loss-specific delta, so it returns ones here.
+static vec act_backward(const std::string& name, const vec& z, const vec& a) {
+    vec r(a.size());
+    if (name == "sigmoid") {
+        for (size_t i = 0; i < a.size(); ++i) r[i] = a[i] * (1.0 - a[i]);
+    } else if (name == "relu") {
+        for (size_t i = 0; i < z.size(); ++i) r[i] = z[i] > 0 ? 1.0 : 0.0;
+    } else if (name == "tanh") {
+        for (size_t i = 0; i < a.size(); ++i) r[i] = 1.0 - a[i] * a[i];
+    } else if (name == "linear" || name == "softmax") {
+        for (auto& v : r) v = 1.0;
+    } else {
+        throw std::invalid_argument("Unknown activation: " + name);
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------------------
+// Data model
+// ---------------------------------------------------------------------------
+struct Layer {
+    mat W;              // (n_out, n_in)
+    vec b;              // (n_out,)
+    std::string activation;
+};
 
 struct Network {
-  matrix3D W;   // W[l] : (sizes[l+1] × sizes[l])
-  matrix3D b;   // b[l] : (sizes[l+1] × 1)
+    std::vector<Layer> layers;
+    std::string loss;   // "mse" | "cross_entropy"
 };
 
-// forward: returns (activations per layer, z's per layer)
 struct Cache {
-    matrix3D a;   // a[0]=input, a[L]=output
-    matrix3D z;   // z[1..L]
+    std::vector<vec> a; // a[0]=input, a[L]=output
+    std::vector<vec> z; // z[0] unused; z[l] for l=1..L
 };
 
+// ---------------------------------------------------------------------------
+// Factory
+//   layer_specs: list of (n_neurons, activation) for EVERY layer, input first.
+//   e.g. [(784,"linear"), (128,"relu"), (10,"softmax")]
+//   loss: "mse" | "cross_entropy"
+// ---------------------------------------------------------------------------
+Network Construct(const std::vector<std::pair<int, std::string>>& layer_specs,
+                  const std::string& loss,
+                  int seed = 42)
+{
+    if (layer_specs.size() < 2)
+        throw std::invalid_argument("Construct: need >=2 layers (input + output)");
+    if (loss != "mse" && loss != "cross_entropy")
+        throw std::invalid_argument("Construct: loss must be 'mse' or 'cross_entropy'");
 
-matrix2D Matrix_Multiply(const matrix2D& A, const matrix2D& B){
-  if (A.empty() || B.empty()) {
-    throw std::invalid_argument("Matrix_Multiply: Matrices cannot be empty");
-  }
-  int r1 = A.size();
-  int c1 = A[0].size();
-  int r2 = B.size();
-  int c2 = B[0].size();
+    std::mt19937 gen(seed);
+    std::uniform_real_distribution<double> distr(-0.8, 0.8);
 
-  if(c1==r2){
-    matrix2D result(r1,matrix1D(c2,0)); // Initializing result matrix
+    Network net;
+    net.loss = loss;
 
-    for(size_t i=0;i<r1;i++){
-      for(size_t j=0;j<c2;j++){
-        for(size_t k=0;k<c1;k++){
-          result[i][j]+=A[i][k]*B[k][j];
+    // The "input layer" is only a shape declaration; no weights attach to it.
+    for (size_t l = 0; l + 1 < layer_specs.size(); ++l) {
+        const int n_in  = layer_specs[l].first;
+        const int n_out = layer_specs[l + 1].first;
+        Layer L;
+        L.W = mat(n_out, vec(n_in));
+        for (auto& row : L.W) for (auto& v : row) v = distr(gen);
+        L.b = vec(n_out);
+        for (auto& v : L.b) v = distr(gen);
+        L.activation = layer_specs[l + 1].second;
+        net.layers.push_back(std::move(L));
+    }
+    return net;
+}
+
+// ---------------------------------------------------------------------------
+// Forward
+// ---------------------------------------------------------------------------
+Cache Forward(const Network& net, const vec& x) {
+    Cache c;
+    const size_t L = net.layers.size();
+    c.a.resize(L + 1);
+    c.z.resize(L + 1);
+    c.a[0] = x;
+    for (size_t l = 0; l < L; ++l) {
+        c.z[l + 1] = vadd(matvec(net.layers[l].W, c.a[l]), net.layers[l].b);
+        c.a[l + 1] = act_forward(net.layers[l].activation, c.z[l + 1]);
+    }
+    return c;
+}
+
+// ---------------------------------------------------------------------------
+// Loss + output delta
+// ---------------------------------------------------------------------------
+static double loss_value(const std::string& name, const vec& a, const vec& t) {
+    double s = 0.0;
+    if (name == "mse") {
+        for (size_t i = 0; i < a.size(); ++i) {
+            const double e = a[i] - t[i];
+            s += 0.5 * e * e;
         }
-      }
+    } else if (name == "cross_entropy") {
+        const double eps = 1e-12;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (t[i] > 0.0) s -= t[i] * std::log(std::max(a[i], eps));
+    } else {
+        throw std::invalid_argument("Unknown loss: " + name);
     }
-  return result;
-  }
-
-  else{
-    throw std::invalid_argument("Matrix_Multiply: dimension mismatch");
-  }
+    return s;
 }
 
-
-matrix2D Matrix_ADD(const matrix2D& A, const matrix2D& B){
-  if (A.empty() || B.empty()) {
-    throw std::invalid_argument("Matrix_ADD: Matrices cannot be empty");
-  }
-
-  int r1 = A.size();
-  int c1 = A[0].size();
-  int r2 = B.size();
-  int c2 = B[0].size();
-
-  if(c1==c2&&r1==r2){
-    matrix2D result(r1,matrix1D(c2,0)); // Initializing result matrix
-    for(size_t i=0;i<r1;i++){
-      for(size_t j=0;j<c1;j++){
-        result[i][j]=A[i][j]+B[i][j];
-      }
+// Delta at the output layer:
+//   mse + sigmoid:           (a - t) ⊙ σ'(a)
+//   mse + linear:            (a - t)
+//   cross_entropy + softmax: (a - t)          <-- the classic simplification
+//   cross_entropy + sigmoid: (a - t)          <-- per-output binary CE
+static vec output_delta(const Network& net, const Cache& c, const vec& t) {
+    const size_t L = net.layers.size();
+    const std::string& out_act = net.layers[L - 1].activation;
+    vec diff = vsub(c.a[L], t);
+    if (net.loss == "mse" && out_act == "sigmoid") {
+        return vmul(diff, act_backward("sigmoid", c.z[L], c.a[L]));
     }
-    return result;
-  }
-  else{
-    throw std::invalid_argument("Matrix_ADD: dimension mismatch");
-  }
+    return diff;   // cross-entropy w/ softmax or sigmoid, or mse w/ linear
 }
 
+// ---------------------------------------------------------------------------
+// One SGD step
+// ---------------------------------------------------------------------------
+double TrainStep(Network& net, const vec& x, const vec& t, double lr) {
+    const int L = static_cast<int>(net.layers.size());
+    Cache c = Forward(net, x);
+    const double loss = loss_value(net.loss, c.a[L], t);
 
-matrix2D Matrix_Subtract(const matrix2D& A, const matrix2D& B){
-  if (A.empty() || B.empty()) {
-    throw std::invalid_argument("Matrix_Subtract: Matrices cannot be empty");
-  }
-
-  int r1 = A.size();
-  int c1 = A[0].size();
-  int r2 = B.size();
-  int c2 = B[0].size();
-
-  if(c1==c2&&r1==r2){
-    matrix2D result(r1,matrix1D(c2,0)); // Initializing result matrix
-    for(size_t i=0;i<r1;i++){
-      for(size_t j=0;j<c1;j++){
-        result[i][j]=A[i][j]-B[i][j];
-      }
+    // deltas
+    std::vector<vec> d(L + 1);
+    d[L] = output_delta(net, c, t);
+    for (int l = L - 1; l >= 1; --l) {
+        vec incoming = matT_vec(net.layers[l].W, d[l + 1]);
+        d[l] = vmul(incoming,
+                    act_backward(net.layers[l - 1].activation, c.z[l], c.a[l]));
     }
-    return result;
-  }
-  else{
-    throw std::invalid_argument("Matrix_ADD: dimension mismatch");
-  }
+
+    // updates
+    for (int l = 0; l < L; ++l) {
+        Layer& lay = net.layers[l];
+        for (size_t i = 0; i < lay.W.size(); ++i) {
+            for (size_t j = 0; j < lay.W[i].size(); ++j)
+                lay.W[i][j] -= lr * d[l + 1][i] * c.a[l][j];
+            lay.b[i] -= lr * d[l + 1][i];
+        }
+    }
+    return loss;
 }
 
-
-matrix2D Matrix_Transpose(const matrix2D& A){
-  if (A.empty()) throw std::invalid_argument("Matrix_Transpose: empty");
-  size_t r = A.size(), c = A[0].size();
-  matrix2D T(c, matrix1D(r, 0.0));
-  for (size_t i = 0; i < r; ++i)
-    for (size_t j = 0; j < c; ++j)
-      T[j][i] = A[i][j];
-  return T;
-}
-
-
-matrix2D Matrix_Scale(const matrix2D& A, double s) {
-    matrix2D R = A;
-    for (auto& row : R) for (auto& v : row) v *= s;
+// ---------------------------------------------------------------------------
+// Target encoding
+// ---------------------------------------------------------------------------
+static mat one_hot(const std::vector<int>& labels, int n_classes) {
+    mat R(labels.size(), vec(n_classes, 0.0));
+    for (size_t i = 0; i < labels.size(); ++i) {
+        if (labels[i] < 0 || labels[i] >= n_classes)
+            throw std::invalid_argument("one_hot: label out of range");
+        R[i][labels[i]] = 1.0;
+    }
     return R;
 }
 
-
-matrix2D sigmoid(const matrix2D& A){
-  matrix2D R = A;
-  for (size_t i = 0; i < R.size(); ++i)
-    for (size_t j = 0; j < R[i].size(); ++j) {
-      double x = R[i][j];
-      if (x >= 0) R[i][j] = 1.0 / (1.0 + std::exp(-x));
-      else        R[i][j] = std::exp(x) / (1.0 + std::exp(x));
-    }
-  return R;
-}
-
-
-matrix2D Hadamard(const matrix2D& A, const matrix2D& B){
-  if (A.empty() || B.empty())
-    throw std::invalid_argument("Hadamard: empty matrix");
-  /*This function computes the Hadamard product — the element-wise multiplication of two matrices of identical shape.*/
-  if (A.size() != B.size() || A[0].size() != B[0].size())
-    throw std::invalid_argument("Hadamard: dimension mismatch");
-
-  matrix2D R = A;
-
-  for (size_t i = 0; i < A.size(); ++i)
-    for (size_t j = 0; j < A[i].size(); ++j)
-      R[i][j] = A[i][j] * B[i][j];
-  return R;
-}
-
-
-matrix2D Sigmoid_Derivative(const matrix2D& a){
-  // σ'(z) = a·(1−a)
-  matrix2D R = a;
-  for (size_t i = 0; i < R.size(); ++i)
-    for (size_t j = 0; j < R[i].size(); ++j)
-      R[i][j] = a[i][j] * (1.0 - a[i][j]);
-  return R;
-}
-
-// Output layer: d^L = (a − t) ⊙ σ'(a)
-matrix2D Backward_Output(const matrix2D& a, const matrix2D& t) {
-  return Hadamard(Matrix_Subtract(a, t), Sigmoid_Derivative(a));
-}
-
-
-// Hidden layer: d^l = ((W^{l+1})ᵀ · d^{l+1}) ⊙ σ'(a^l)
-matrix2D Backward_Hidden(const matrix2D& a,            // activation of THIS layer
-                         const matrix2D& W_next,       // weights of NEXT layer
-                         const matrix2D& d_next) {     // delta of NEXT layer
-  matrix2D incoming = Matrix_Multiply(Matrix_Transpose(W_next), d_next);
-  return Hadamard(incoming, Sigmoid_Derivative(a));
-}
-
-
-Network Construct_Neural_Net(const std::vector<int>& sizes) {
-  // std::random_device rd;
-  std::mt19937 gen(42);
-  std::uniform_int_distribution<> distr(-0.8,0.8);
-  
-  // sizes = {InputN, HiddenN, ..., OutputN}; length = TotalL + 1 if TotalL counts weighted layers
-  if (sizes.size() < 2)
-      throw std::invalid_argument("Construct_Neural_Net: need at least 2 layer sizes");
-
-  Network net;
-  size_t L = sizes.size() - 1;          // number of weighted layers
-  net.W.resize(L);
-  net.b.resize(L);
-
-  for (size_t l = 0; l < L; ++l) {
-    int n_in  = sizes[l];
-    int n_out = sizes[l + 1];
-    net.W[l] = matrix2D(n_out, matrix1D(n_in, distr(gen)));
-    for (auto& row : net.W[l])
-        for (auto& v : row)
-            v = distr(gen); 
-    net.b[l] = matrix2D(n_out, matrix1D(1,   distr(gen)));
-  }
-  return net;
-}
-
-
-Cache Forward(const Network& net, const matrix2D& x) {
-  size_t L = net.W.size();
-  Cache c;
-  c.a.resize(L+1);
-  c.z.resize(L+1);
-  c.a[0] = x;
-
-  for (size_t l = 0; l < L; ++l) {
-    c.z[l+1] = Matrix_ADD(Matrix_Multiply(net.W[l], c.a[l]), net.b[l]);
-    c.a[l+1] = sigmoid(c.z[l+1]);
-  }
-   return c;
-}
-
-double TrainStep(Network& net, const matrix2D& x,
-                 const matrix2D& t, double lr) {
-  int L = net.W.size();
-  Cache c = Forward(net, x);
-
-  // loss
-  double loss = 0.0;
-  for (size_t i = 0; i < c.a[L].size(); ++i) {
-      double e = c.a[L][i][0] - t[i][0];
-      loss += 0.5 * e * e;
-  }
-
-  // deltas
-  std::vector<matrix2D> d(L+1);
-  d[L] = Backward_Output(c.a[L], t);
-  for (int l = L-1; l >= 1; --l)
-      d[l] = Backward_Hidden(c.a[l], net.W[l], d[l+1]);
-
-  // gradients + update
-  for (size_t l = 0; l < L; ++l) {
-      matrix2D dW = Matrix_Multiply(d[l+1], Matrix_Transpose(c.a[l]));
-      net.W[l] = Matrix_Subtract(net.W[l], Matrix_Scale(dW, lr));   // add Matrix_Scale helper
-      net.b[l] = Matrix_Subtract(net.b[l], Matrix_Scale(d[l+1], lr));
-  }
-  return loss;
-}
-
+// ---------------------------------------------------------------------------
+// Training loop
+//   X       : (n_samples, n_in)
+//   Y_int   : (n_samples,) int labels      [used when use_int_labels == true]
+//   Y_float : (n_samples, n_out) targets   [used otherwise]
+// ---------------------------------------------------------------------------
 double TrainLoop(Network& net,
-                 const matrix3D& X,          // list of inputs, each a matrix2D column vector
-                 const matrix3D& Y,          // list of targets, each a matrix2D column vector
+                 const mat& X,
+                 const std::vector<int>& Y_int,
+                 const mat& Y_float,
+                 bool use_int_labels,
                  int epochs,
                  double lr,
-                 int report_every = 1000)
-                 // int seed = 0,
-                 // bool shuffle = true)
+                 int batch_size = 1,
+                 int report_every = 1000,
+                 int seed = 0,
+                 bool shuffle = true)
 {
-    if (X.size() != Y.size())
-        throw std::invalid_argument("TrainLoop: X and Y must have the same length");
-    if (X.empty())
-        throw std::invalid_argument("TrainLoop: dataset is empty");
-
+    if (X.empty()) throw std::invalid_argument("TrainLoop: empty X");
     const size_t n = X.size();
 
-    // // index vector we shuffle each epoch
-    // std::vector<int> idx(n);
-    // std::iota(idx.begin(), idx.end(), 0);
-    //
-    // std::mt19937 gen(seed);
+    mat Y;
+    if (use_int_labels) {
+        if (Y_int.size() != n) throw std::invalid_argument("TrainLoop: Y_int length mismatch");
+        const int n_out = static_cast<int>(net.layers.back().W.size());
+        Y = one_hot(Y_int, n_out);
+    } else {
+        if (Y_float.size() != n) throw std::invalid_argument("TrainLoop: Y_float length mismatch");
+        Y = Y_float;
+    }
+
+    if (batch_size < 1) batch_size = 1;
+
+    std::vector<int> idx(n);
+    std::iota(idx.begin(), idx.end(), 0);
+    std::mt19937 gen(seed);
+
     double last_epoch_loss = 0.0;
 
     for (int epoch = 0; epoch < epochs; ++epoch) {
-        // if (shuffle)
-        //     std::shuffle(idx.begin(), idx.end(), gen);
+        if (shuffle) std::shuffle(idx.begin(), idx.end(), gen);
 
         double total_loss = 0.0;
-        for (int i = 0; i < static_cast<int>(n); ++i) {
-            total_loss += TrainStep(net, X[i], Y[i], lr);
-        }
-        last_epoch_loss = total_loss / static_cast<double>(n);
 
-        if (report_every > 0 && (epoch % report_every == 0)) {
+        if (batch_size == 1) {
+            for (int i : idx) total_loss += TrainStep(net, X[i], Y[i], lr);
+        } else {
+            // mini-batch: accumulate gradients, average, update once
+            for (size_t start = 0; start < n; start += batch_size) {
+                const size_t end = std::min(start + static_cast<size_t>(batch_size), n);
+                // accumulate dW, db over the batch, then apply averaged update
+                std::vector<mat> dW(net.layers.size());
+                std::vector<vec> db(net.layers.size());
+                for (size_t l = 0; l < net.layers.size(); ++l) {
+                    dW[l] = mat(net.layers[l].W.size(),
+                                vec(net.layers[l].W[0].size(), 0.0));
+                    db[l] = vec(net.layers[l].b.size(), 0.0);
+                }
+                for (size_t k = start; k < end; ++k) {
+                    const int i = idx[k];
+                    Cache c = Forward(net, X[i]);
+                    total_loss += loss_value(net.loss, c.a.back(), Y[i]);
+
+                    const int L = static_cast<int>(net.layers.size());
+                    std::vector<vec> d(L + 1);
+                    d[L] = output_delta(net, c, Y[i]);
+                    for (int l = L - 1; l >= 1; --l) {
+                        vec incoming = matT_vec(net.layers[l].W, d[l + 1]);
+                        d[l] = vmul(incoming,
+                                    act_backward(net.layers[l - 1].activation,
+                                                 c.z[l], c.a[l]));
+                    }
+                    for (int l = 0; l < L; ++l) {
+                        for (size_t r = 0; r < net.layers[l].W.size(); ++r) {
+                            for (size_t c2 = 0; c2 < net.layers[l].W[r].size(); ++c2)
+                                dW[l][r][c2] += d[l + 1][r] * c.a[l][c2];
+                            db[l][r] += d[l + 1][r];
+                        }
+                    }
+                }
+                const double inv = 1.0 / static_cast<double>(end - start);
+                for (size_t l = 0; l < net.layers.size(); ++l) {
+                    for (size_t r = 0; r < net.layers[l].W.size(); ++r) {
+                        for (size_t c2 = 0; c2 < net.layers[l].W[r].size(); ++c2)
+                            net.layers[l].W[r][c2] -= lr * inv * dW[l][r][c2];
+                        net.layers[l].b[r] -= lr * inv * db[l][r];
+                    }
+                }
+            }
+        }
+
+        last_epoch_loss = total_loss / static_cast<double>(n);
+        if (report_every > 0 && (epoch % report_every == 0))
             std::cout << "epoch " << epoch
                       << "  loss " << last_epoch_loss << "\n";
-        }
     }
     return last_epoch_loss;
 }
 
-
-int main_run(){
-  matrix2D input = {
-    {1.0},
-    {0.5}
-  };
-
-  matrix2D w1 = {
-    {0.5,-0.3},
-    {0.8,0.2}
-  };
-
-  matrix2D b1 = {
-    {0.1},
-    {-0.1}
-  };
-
-  matrix2D w2 = {
-    {0.6,-0.4}
-  };
-
-  matrix2D b2 = {
-    {0.05}
-  };
-
-  matrix2D target = {
-    {1.0}
-  };
-
-  matrix2D z1_temp = Matrix_Multiply(w1,input);
-  matrix2D z1 = Matrix_ADD(z1_temp, b1);
-  matrix2D a1=sigmoid(z1);
-
-  matrix2D z2_temp = Matrix_Multiply(w2,a1);
-  matrix2D z2 = Matrix_ADD(z2_temp, b2);
-  matrix2D a2 = sigmoid(z2);
-
-  for(const auto& row : a2){
-    for(auto val : row){
-      std::cout << val <<" ";
-    }
-    std::cout << "\n";
-  }
-  return 0;
+// ---------------------------------------------------------------------------
+// Inference helpers
+// ---------------------------------------------------------------------------
+vec Predict(const Network& net, const vec& x) {
+    return Forward(net, x).a.back();
 }
 
-PYBIND11_MODULE(neural_functions, m) {
-    m.doc() = "BaguetteAI neural network C++ core";
+int Predict_Class(const Network& net, const vec& x) {
+    const vec p = Predict(net, x);
+    return static_cast<int>(std::distance(p.begin(),
+                                          std::max_element(p.begin(), p.end())));
+}
 
-    // ---- bind structs first (required for the functions below) ----
+// ---------------------------------------------------------------------------
+// Bindings
+// ---------------------------------------------------------------------------
+PYBIND11_MODULE(neural_functions, m) {
+    m.doc() = "General-purpose C++ neural network core";
+
+    py::class_<Layer>(m, "Layer")
+        .def_readwrite("W", &Layer::W)
+        .def_readwrite("b", &Layer::b)
+        .def_readwrite("activation", &Layer::activation);
+
     py::class_<Network>(m, "Network")
-        .def_readwrite("W", &Network::W)
-        .def_readwrite("b", &Network::b);
+        .def_readwrite("layers", &Network::layers)
+        .def_readwrite("loss",   &Network::loss);
 
     py::class_<Cache>(m, "Cache")
         .def_readwrite("a", &Cache::a)
         .def_readwrite("z", &Cache::z);
 
-    // ---- matrix primitives ----
-    m.def("Matrix_Multiply",    &Matrix_Multiply,    "Multiply two 2-D matrices");
-    m.def("Matrix_ADD",         &Matrix_ADD,         "Add two 2-D matrices");
-    m.def("Matrix_Subtract",    &Matrix_Subtract,    "Subtract two 2-D matrices");
-    m.def("Matrix_Transpose",   &Matrix_Transpose,   "Transpose the Matrix");
-    m.def("Matrix_Scale",       &Matrix_Scale,       "Multiply each entry by a scalar");
-    m.def("sigmoid",            &sigmoid,            "Element-wise sigmoid");
-    m.def("Hadamard",           &Hadamard,           "Element-wise multiply");
-    m.def("Sigmoid_Derivative", &Sigmoid_Derivative, "Sigmoid derivative (from activation)");
+    // factory
+    m.def("Construct", &Construct,
+          "Build a network. layer_specs = [(n_neurons, activation), ...], "
+          "activation ∈ {'sigmoid','relu','tanh','linear','softmax'}, "
+          "loss ∈ {'mse','cross_entropy'}.",
+          py::arg("layer_specs"), py::arg("loss"), py::arg("seed") = 42);
 
-    // ---- network functions ----
-    m.def("Backward_Output",      &Backward_Output,      "Output-layer delta");
-    m.def("Backward_Hidden",      &Backward_Hidden,      "Hidden-layer delta");
-    m.def("Construct_Neural_Net", &Construct_Neural_Net, "Build a network from layer sizes");
-    m.def("Forward",              &Forward,              "Return Cache (activations + z)");
-    m.def("TrainStep",            &TrainStep,            "One SGD step, mutates net");
+    // single-sample primitives
+    m.def("Forward",   &Forward);
+    m.def("TrainStep", &TrainStep);
+    m.def("Predict",       &Predict);
+    m.def("Predict_Class", &Predict_Class);
+
+    // batch trainer
     m.def("TrainLoop", &TrainLoop,
-          "Run a full training loop over (X, Y). Mutates net in place.",
-          py::arg("net"),
-          py::arg("X"),
-          py::arg("Y"),
-          py::arg("epochs"),
-          py::arg("lr"),
-          py::arg("report_every") = 1000);
-          // py::arg("seed")         = 0,
-          // py::arg("shuffle")      = true);
+          "X: (n, n_in). Y_int: (n,) labels (use_int_labels=True). "
+          "Y_float: (n, n_out) (use_int_labels=False).",
+          py::arg("net"), py::arg("X"),
+          py::arg("Y_int"), py::arg("Y_float"), py::arg("use_int_labels"),
+          py::arg("epochs"), py::arg("lr"),
+          py::arg("batch_size") = 1,
+          py::arg("report_every") = 1000,
+          py::arg("seed") = 0,
+          py::arg("shuffle") = true);
 
-    m.def("main_run",             &main_run,             "Demo network");
+    // raw activation helper for users who want to experiment
+    m.def("act_forward",  &act_forward);
+    m.def("act_backward", &act_backward);
 }

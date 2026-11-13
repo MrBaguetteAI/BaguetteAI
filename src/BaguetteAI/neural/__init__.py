@@ -1,62 +1,29 @@
 from .neural_functions import (
-    # matrix primitives
-    Matrix_Multiply,
-    Matrix_ADD,
-    Matrix_Subtract,
-    Matrix_Transpose,
-    Matrix_Scale,
-    Hadamard,
-    # activation
-    sigmoid,
-    Sigmoid_Derivative,
-    # backprop building blocks
-    Backward_Output,
-    Backward_Hidden,
-    # network
-    Network,
-    Cache,
-    Construct_Neural_Net,
+    # Factory
+    Construct,
+    # single-sample primitives
     Forward,
     TrainStep,
+    Predict,
+    Predict_Class,
+    # Batch trainer
     TrainLoop,
-    # demo
-    main_run,
+    # raw activation helper for users who want to experiment
+    act_forward,
+    act_backward,
 )
 
 __all__ = [
-    "Matrix_Multiply",
-    "Matrix_ADD",
-    "Matrix_Subtract",
-    "Matrix_Transpose",
-    "Matrix_Scale",
-    "Hadamard",
-    "sigmoid",
-    "Sigmoid_Derivative",
-    "Backward_Output",
-    "Backward_Hidden",
-    "Network",
-    "Cache",
-    "Construct_Neural_Net",
+    # Factory
+    "Construct",
+    # single-sample primitives
     "Forward",
     "TrainStep",
+    "Predict",
+    "Predict_Class",
+    # Batch trainer
     "TrainLoop",
-    "main_run",
+    # raw activation helper for users who want to experiment
+    "act_forward",
+    "act_backward",
 ]
-
-
-#         from .neural import (
-#     neuron,
-#     constructW,
-#     extract,
-#     insert,
-#     constructL,
-#     compute,
-#     backprop,
-#     training_epochs,
-#     training
-# )
-
-# __all__ = [
-#         "neuron", "constructW", "extract", "insert", "constructL", "compute",
-#     "backprop", "training_epochs", "training",
-#     ]
